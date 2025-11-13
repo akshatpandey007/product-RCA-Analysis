@@ -9,7 +9,7 @@ class Settings(BaseSettings):
     
     # Gemini API Configuration
     gemini_api_key: str
-    gemini_model: str = "gemini-2.0-flash-exp"
+    gemini_model: str = "gemini-2.5-flash"
     
     # Server Configuration
     host: str = "0.0.0.0"
@@ -18,6 +18,11 @@ class Settings(BaseSettings):
     
     # CORS Configuration
     cors_origins: str = "http://localhost:3000,http://localhost:5173"
+    
+    # BigQuery MCP Configuration (Optional)
+    bigquery_project_id: str = ""
+    google_application_credentials: str = ""
+    enable_bigquery_mcp: bool = False
     
     model_config = SettingsConfigDict(
         env_file=".env",

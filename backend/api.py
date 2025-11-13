@@ -1,8 +1,3 @@
-"""
-FastAPI backend for agentic chatbot.
-Handles frontend communication and routes requests to the chat agent.
-"""
-
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -41,10 +36,6 @@ class HealthResponse(BaseModel):
     message: str
 
 
-# ============================================================================
-# FastAPI Application
-# ============================================================================
-
 app = FastAPI(
     title="Agentic Chatbot API",
     description="MVP chatbot backend with Gemini AI, task management, and MCP tool support",
@@ -67,7 +58,6 @@ app.add_middleware(
 
 @app.get("/", response_model=HealthResponse)
 async def root():
-    """Root endpoint - health check."""
     return {
         "status": "ok",
         "message": "Agentic Chatbot API is running"
@@ -76,7 +66,6 @@ async def root():
 
 @app.get("/health", response_model=HealthResponse)
 async def health():
-    """Health check endpoint."""
     return {
         "status": "healthy",
         "message": "Service is operational"
@@ -98,15 +87,7 @@ async def start_chat():
 
 @app.post("/chat/message", response_model=ChatResponse)
 async def send_message(request: ChatRequest):
-    """
-    Send a message to the chat agent.
     
-    The agent will:
-    - Process the message with Gemini
-    - Use tools if needed (search, calculate, etc.)
-    - Create task lists for complex requests
-    - Return a response with text, tasks, and tool call info
-    """
     try:
         response = await agent.send_message(request.message)
         return response

@@ -3,10 +3,21 @@ Agentic chat agent with Gemini integration, task management, and MCP tool suppor
 """
 
 import json
+import asyncio
 import google.generativeai as genai
 from typing import List, Dict, Any, Optional
 from pydantic import BaseModel
 from config import settings
+
+# Optional: Import MCP client if BigQuery integration is enabled
+try:
+    if settings.enable_bigquery_mcp:
+        from mcp_client import mcp_client
+        MCP_ENABLED = True
+    else:
+        MCP_ENABLED = False
+except Exception:
+    MCP_ENABLED = False
 
 
 # ============================================================================
@@ -177,6 +188,80 @@ mcp_tools.register_tool(
     handler=create_task_list_tool
 )
 
+# ============================================================================
+# BigQuery Tools (if enabled)
+# ============================================================================
+
+if MCP_ENABLED and settings.enable_bigquery_mcp:
+    from bigquery_tools import (
+        bigquery_list_datasets,
+        bigquery_list_tables,
+        bigquery_get_schema,
+        bigquery_query
+    )
+    
+    mcp_tools.register_tool(
+        name="bigquery_list_datasets",
+        description="List all available BigQuery datasets in the project",
+        parameters={
+            "type": "object",
+            "properties": {}
+        },
+        handler=bigquery_list_datasets
+    )
+    
+    mcp_tools.register_tool(
+        name="bigquery_list_tables",
+        description="List all tables in a specific BigQuery dataset",
+        parameters={
+            "type": "object",
+            "properties": {
+                "dataset_id": {
+                    "type": "string",
+                    "description": "The ID of the dataset to list tables from"
+                }
+            },
+            "required": ["dataset_id"]
+        },
+        handler=bigquery_list_tables
+    )
+    
+    mcp_tools.register_tool(
+        name="bigquery_get_schema",
+        description="Get the schema (columns and types) of a BigQuery table",
+        parameters={
+            "type": "object",
+            "properties": {
+                "dataset_id": {
+                    "type": "string",
+                    "description": "The dataset ID"
+                },
+                "table_id": {
+                    "type": "string",
+                    "description": "The table ID"
+                }
+            },
+            "required": ["dataset_id", "table_id"]
+        },
+        handler=bigquery_get_schema
+    )
+    
+    mcp_tools.register_tool(
+        name="bigquery_query",
+        description="Execute a SQL query on BigQuery. Use this to analyze data, get insights, and answer questions about the data. The query will automatically be limited to 100 rows if no LIMIT is specified for safety.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "The BigQuery SQL query to execute. Use backticks for table names like `project.dataset.table`"
+                }
+            },
+            "required": ["query"]
+        },
+        handler=bigquery_query
+    )
+
 
 # ============================================================================
 # Chat Agent
@@ -193,6 +278,15 @@ class ChatAgent:
         # Configure Gemini
         genai.configure(api_key=settings.gemini_api_key)
         
+        # Initialize MCP if enabled
+        self.mcp_connected = False
+        if MCP_ENABLED:
+            try:
+                # Connect to BigQuery MCP server
+                asyncio.create_task(self._connect_bigquery_mcp())
+            except Exception as e:
+                print(f"Warning: Could not connect to BigQuery MCP: {e}")
+        
         # Initialize model with tool support
         self.model = genai.GenerativeModel(
             model_name=settings.gemini_model,
@@ -204,6 +298,28 @@ class ChatAgent:
         
         # Task management
         self.current_task_list: Optional[TaskList] = None
+    
+    async def _connect_bigquery_mcp(self):
+        """Connect to BigQuery MCP server if enabled."""
+        if not MCP_ENABLED:
+            return
+        
+        try:
+            # Connect to BigQuery MCP server
+            await mcp_client.connect_server(
+                server_name="bigquery",
+                command="npx",
+                args=["-y", "@modelcontextprotocol/server-bigquery"],
+                env={
+                    "GOOGLE_APPLICATION_CREDENTIALS": settings.google_application_credentials,
+                    "BIGQUERY_PROJECT_ID": settings.bigquery_project_id
+                }
+            )
+            self.mcp_connected = True
+            print("✅ Connected to BigQuery MCP server")
+        except Exception as e:
+            print(f"⚠️ BigQuery MCP connection failed: {e}")
+            self.mcp_connected = False
     
     def _get_gemini_tools(self) -> List[Any]:
         """Convert MCP tools to Gemini function declarations."""
