@@ -3,8 +3,10 @@ Agentic chat agent with Gemini integration, task management, and MCP tool suppor
 """
 
 import json
+import re
 import asyncio
 from concurrent.futures import TimeoutError as FuturesTimeoutError
+from datetime import datetime
 import google.generativeai as genai
 from typing import List, Dict, Any, Optional
 from pydantic import BaseModel
@@ -139,6 +141,43 @@ async def create_task_list_tool(tasks: List[str]) -> Dict[str, Any]:
     return task_list.to_dict()
 
 
+async def get_current_datetime_tool(timezone: Optional[str] = None) -> str:
+    """
+    Get the current date and time.
+    
+    Args:
+        timezone: Optional timezone (e.g., 'UTC', 'America/New_York'). 
+                  If not provided, returns local time.
+    
+    Returns:
+        Current date and time in ISO format with timezone info.
+    """
+    now = datetime.now()
+    
+    if timezone:
+        try:
+            # Try zoneinfo (Python 3.9+)
+            try:
+                from zoneinfo import ZoneInfo
+                tz = ZoneInfo(timezone)
+                now = datetime.now(tz)
+            except ImportError:
+                # Fallback to pytz if zoneinfo not available
+                try:
+                    import pytz
+                    tz = pytz.timezone(timezone)
+                    now = datetime.now(tz)
+                except (ImportError, Exception):
+                    # If timezone is invalid or libraries unavailable, use local time
+                    pass
+        except Exception:
+            # If timezone is invalid, fall back to local time
+            pass
+    
+    # Return in ISO format with timezone
+    return now.isoformat()
+
+
 # ============================================================================
 # Initialize Tool Registry (Copy-Paste Configuration Area)
 # ============================================================================
@@ -187,6 +226,22 @@ mcp_tools.register_tool(
         "required": ["tasks"]
     },
     handler=create_task_list_tool
+)
+
+mcp_tools.register_tool(
+    name="get_current_datetime",
+    description="Get the current date and time. Useful for determining 'today', 'yesterday', or relative dates when analyzing data. Returns ISO format datetime with timezone information.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "timezone": {
+                "type": "string",
+                "description": "Optional timezone (e.g., 'UTC', 'America/New_York'). If not provided, returns local server time."
+            }
+        },
+        "required": []
+    },
+    handler=get_current_datetime_tool
 )
 
 # ============================================================================
@@ -416,6 +471,12 @@ class ChatAgent:
         }
         
         try:
+            # Log user query and plan
+            print(f"\n{'='*80}")
+            print(f"📋 USER QUERY: {message}")
+            print(f"{'='*80}")
+            print(f"📝 Agent will analyze the query and create an execution plan...")
+            
             # Send message to Gemini with timeout
             print(f"⏳ Sending message to Gemini (timeout: {timeout}s)...")
             try:
@@ -427,6 +488,25 @@ class ChatAgent:
                 response_data["text"] = f"⏱️ Request timed out after {timeout} seconds. The LLM took too long to respond. Please try again with a simpler query."
                 response_data["error"] = f"Timeout: {str(e)}"
                 return response_data
+            
+            # Check finish_reason for initial response
+            if hasattr(response, 'candidates') and response.candidates:
+                candidate = response.candidates[0]
+                finish_reason = getattr(candidate, 'finish_reason', None)
+                if finish_reason:
+                    print(f"📊 Initial response finish_reason: {finish_reason}")
+                    if finish_reason not in [1, "STOP"]:  # 1 is STOP in protobuf enum
+                        print(f"⚠️ Warning: Response finished with reason {finish_reason} (not STOP). This may indicate an incomplete or malformed response.")
+                        if finish_reason in [2, "MAX_TOKENS"]:
+                            print("⚠️ Response was truncated due to MAX_TOKENS. Consider increasing max_output_tokens.")
+                        elif finish_reason in [3, "SAFETY"]:
+                            print("⚠️ Response was blocked by safety filters.")
+                        elif finish_reason in [4, "RECITATION"]:
+                            print("⚠️ Response was blocked due to recitation detection.")
+                        elif finish_reason in [5, "OTHER"]:
+                            print("⚠️ Response finished with OTHER reason - may be incomplete.")
+                        elif finish_reason in [6, "MALFORMED_FUNCTION_CALL"]:
+                            print("❌ Response had MALFORMED_FUNCTION_CALL - this is a critical error.")
             
             # Handle function calls (tool usage) with timeout tracking
             max_iterations = 10  # Prevent infinite loops
@@ -445,9 +525,15 @@ class ChatAgent:
                     print(f"🔧 Executing tool: {tool_name}")
                     
                     # Log full arguments for SQL queries
-                    if tool_name == "bigquery_query" and "sql_query" in tool_args:
-                        print(f"📝 Full SQL Query:")
-                        print(tool_args["sql_query"])
+                    if tool_name == "bigquery_query":
+                        if "query" in tool_args:
+                            print(f"📝 Full SQL Query:")
+                            print(tool_args["query"])
+                        elif "sql_query" in tool_args:
+                            print(f"📝 Full SQL Query (sql_query param):")
+                            print(tool_args["sql_query"])
+                        else:
+                            print(f"📝 Tool arguments: {json.dumps(tool_args, indent=2)}")
                     elif tool_args:
                         print(f"📝 Tool arguments: {json.dumps(tool_args, indent=2)}")
                     
@@ -459,6 +545,19 @@ class ChatAgent:
                         if tool_name == "bigquery_query":
                             print(f"✅ Query Result (full):")
                             print(str(tool_result))
+                            
+                            # Check if query failed
+                            tool_result_str = str(tool_result)
+                            query_failed = (
+                                "Query Failed" in tool_result_str or 
+                                "❌" in tool_result_str or
+                                "Error:" in tool_result_str or
+                                "Unrecognized name" in tool_result_str or
+                                "not found" in tool_result_str.lower()
+                            )
+                            
+                            if query_failed:
+                                print("⚠️ Query execution failed - will prompt LLM to fix and continue")
                         
                         # Handle task list creation
                         if tool_name == "create_task_list":
@@ -480,6 +579,18 @@ class ChatAgent:
                             else:
                                 formatted_result = {"result": str(tool_result)}
                             
+                            # If query failed, add explicit instruction to fix and continue
+                            if tool_name == "bigquery_query":
+                                tool_result_str = str(tool_result)
+                                if ("Query Failed" in tool_result_str or 
+                                    "❌" in tool_result_str or
+                                    ("Error:" in tool_result_str and "Query" in tool_result_str)):
+                                    
+                                    # Prepend instruction to the error message
+                                    instruction = "\n\n🔧 INSTRUCTION: The query failed. Analyze the error message above, identify the issue (e.g., wrong column name, syntax error), fix the SQL query, and immediately call bigquery_query again with the corrected query. Do NOT return text to the user - continue with the fixed query execution.\n"
+                                    formatted_result = {"result": instruction + str(tool_result)}
+                                    print("📝 Added fix-and-continue instruction for failed query")
+                            
                             response = self.chat.send_message(
                                 genai.protos.Content(
                                     parts=[
@@ -493,6 +604,23 @@ class ChatAgent:
                                 ),
                                 request_options={"timeout": timeout}
                             )
+                            
+                            # Check finish_reason after tool result
+                            if hasattr(response, 'candidates') and response.candidates:
+                                candidate = response.candidates[0]
+                                finish_reason = getattr(candidate, 'finish_reason', None)
+                                if finish_reason:
+                                    print(f"📊 Tool response finish_reason: {finish_reason}")
+                                    if finish_reason not in [1, "STOP"]:
+                                        print(f"⚠️ Warning: Tool response finished with reason {finish_reason} (not STOP).")
+                                        if finish_reason in [6, "MALFORMED_FUNCTION_CALL"]:
+                                            print("❌ MALFORMED_FUNCTION_CALL detected - clearing response to force continuation")
+                                            # Clear any partial text to force continuation
+                                            if "text" in response_data:
+                                                response_data["text"] = ""
+                                        elif finish_reason in [2, "MAX_TOKENS"]:
+                                            print("⚠️ Response truncated - may be incomplete")
+                                            
                         except (TimeoutError, FuturesTimeoutError) as e:
                             response_data["text"] = f"⏱️ Timeout while processing tool result. The LLM took too long to respond."
                             response_data["error"] = f"Timeout: {str(e)}"
@@ -519,6 +647,21 @@ class ChatAgent:
             if iteration >= max_iterations:
                 print(f"⚠️ Maximum iterations ({max_iterations}) reached in tool call loop")
             
+            # Log execution summary
+            if response_data.get("tool_calls"):
+                print(f"\n{'='*80}")
+                print(f"📊 EXECUTION PLAN SUMMARY:")
+                print(f"{'='*80}")
+                print(f"Total tools executed: {len(response_data['tool_calls'])}")
+                for i, tool_call in enumerate(response_data['tool_calls'], 1):
+                    tool_name = tool_call.get('tool', 'unknown')
+                    print(f"  {i}. {tool_name}")
+                    if tool_name == "bigquery_query" and "arguments" in tool_call:
+                        query = tool_call["arguments"].get("query") or tool_call["arguments"].get("sql_query", "")
+                        if query:
+                            print(f"     Query: {query[:100]}..." if len(query) > 100 else f"     Query: {query}")
+                print(f"{'='*80}\n")
+            
             # Extract final text if not set
             if not response_data["text"]:
                 try:
@@ -533,6 +676,109 @@ class ChatAgent:
                                     break
                 except Exception as e:
                     print(f"Warning: Could not extract text from response: {e}")
+            
+            # Final validation: Check finish_reason and validate response quality
+            if hasattr(response, 'candidates') and response.candidates:
+                candidate = response.candidates[0]
+                finish_reason = getattr(candidate, 'finish_reason', None)
+                if finish_reason and finish_reason not in [1, "STOP"]:
+                    print(f"⚠️ Final response finish_reason: {finish_reason} (not STOP)")
+                    # If response is incomplete or malformed, clear it
+                    if finish_reason in [6, "MALFORMED_FUNCTION_CALL", 5, "OTHER"]:
+                        print("❌ Clearing incomplete/malformed response")
+                        response_data["text"] = ""
+                    elif finish_reason in [2, "MAX_TOKENS"]:
+                        print("⚠️ Response was truncated - may be incomplete")
+                        # Keep the text but log the warning
+            
+            # Validate final text - check for raw JSON or incomplete responses
+            if response_data.get("text"):
+                text = response_data["text"].strip()
+                
+                # Check if entire response is raw JSON
+                if (text.startswith("{") and text.endswith("}")) or (text.startswith("[") and text.endswith("]")):
+                    try:
+                        json.loads(text)
+                        print("⚠️ Detected raw JSON in final response - clearing to force continuation")
+                        response_data["text"] = ""
+                    except json.JSONDecodeError:
+                        pass  # Not valid JSON, might be natural language
+                
+                # Check if response contains embedded raw JSON (e.g., {"bigquery_query_response": ...})
+                # Look for common tool response JSON patterns
+                # Patterns that indicate raw tool response JSON
+                json_indicators = [
+                    r'\{"bigquery_query_response"',
+                    r'\{"bigquery_get_schema_response"',
+                    r'\{"bigquery_list_tables_response"',
+                    r'\{"tool_response"',
+                    r'\{"result"\s*:\s*\{'
+                ]
+                
+                has_json = False
+                for pattern in json_indicators:
+                    if re.search(pattern, text):
+                        has_json = True
+                        print(f"⚠️ Detected embedded raw JSON pattern in response: {pattern}")
+                        break
+                
+                if has_json:
+                    # Try to extract and remove the JSON part
+                    try:
+                        # First try simple approach: find }\n or }\n (with actual newline)
+                        json_end = -1
+                        # Try different patterns for JSON end
+                        patterns = [
+                            ('}\n', 2),  # }\n with actual newline
+                            ('}\\n', 2),  # }\n as escaped string
+                            ('}\n\n', 3),  # }\n\n (double newline)
+                        ]
+                        
+                        for pattern, offset in patterns:
+                            pos = text.find(pattern)
+                            if pos > 0:
+                                json_end = pos
+                                break
+                        
+                        # If simple approach didn't work, try brace counting
+                        if json_end == -1:
+                            brace_count = 0
+                            json_start = -1
+                            
+                            for i, char in enumerate(text):
+                                if char == '{':
+                                    if json_start == -1:
+                                        json_start = i
+                                    brace_count += 1
+                                elif char == '}':
+                                    brace_count -= 1
+                                    if brace_count == 0 and json_start != -1:
+                                        json_end = i
+                                        break
+                        
+                        if json_end > 0:
+                            # Extract text after JSON
+                            # Try different offsets
+                            for offset in [2, 3, 1]:
+                                remaining = text[json_end + offset:].strip()
+                                if remaining and not remaining.startswith('}'):
+                                    response_data["text"] = remaining
+                                    print(f"✅ Cleaned response: removed JSON, kept: {remaining[:100]}...")
+                                    break
+                            else:
+                                # If nothing found, clear it
+                                response_data["text"] = ""
+                                print("⚠️ Response was only JSON - clearing to force continuation")
+                        else:
+                            print("⚠️ Could not find JSON end - clearing response")
+                            response_data["text"] = ""
+                    except Exception as e:
+                        print(f"⚠️ Error cleaning JSON from response: {e} - clearing response")
+                        response_data["text"] = ""
+                
+                # Check if response looks incomplete (ends mid-sentence or is very short after tool calls)
+                if response_data.get("tool_calls") and len(text) < 50:
+                    print("⚠️ Response seems incomplete after tool calls - may need continuation")
             
             # Always include updated task list in response
             if self.current_task_list:
