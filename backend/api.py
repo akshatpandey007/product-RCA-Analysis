@@ -15,6 +15,7 @@ from chat_agent import agent
 class ChatRequest(BaseModel):
     """Request model for chat messages."""
     message: str
+    timeout: Optional[int] = 120  # Optional timeout in seconds (default: 120)
 
 
 class ChatResponse(BaseModel):
@@ -87,9 +88,17 @@ async def start_chat():
 
 @app.post("/chat/message", response_model=ChatResponse)
 async def send_message(request: ChatRequest):
+    """
+    Send a message to the chat agent.
     
+    Args:
+        request: ChatRequest with message and optional timeout
+        
+    Returns:
+        ChatResponse with agent's reply
+    """
     try:
-        response = await agent.send_message(request.message)
+        response = await agent.send_message(request.message, timeout=request.timeout)
         return response
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

@@ -4,6 +4,7 @@ Agentic chat agent with Gemini integration, task management, and MCP tool suppor
 
 import json
 import asyncio
+from concurrent.futures import TimeoutError as FuturesTimeoutError
 import google.generativeai as genai
 from typing import List, Dict, Any, Optional
 from pydantic import BaseModel
@@ -278,14 +279,9 @@ class ChatAgent:
         # Configure Gemini
         genai.configure(api_key=settings.gemini_api_key)
         
-        # Initialize MCP if enabled
+        # Initialize MCP if enabled (connection will happen lazily on first use)
         self.mcp_connected = False
-        if MCP_ENABLED:
-            try:
-                # Connect to BigQuery MCP server
-                asyncio.create_task(self._connect_bigquery_mcp())
-            except Exception as e:
-                print(f"Warning: Could not connect to BigQuery MCP: {e}")
+        self.mcp_connection_attempted = False
         
         # Initialize model with tool support
         self.model = genai.GenerativeModel(
@@ -365,17 +361,26 @@ class ChatAgent:
         self.chat = self.model.start_chat(history=[])
         self.current_task_list = None
     
-    async def send_message(self, message: str) -> Dict[str, Any]:
+    async def send_message(self, message: str, timeout: int = 120) -> Dict[str, Any]:
         """
         Send a message to the agent and get a response.
         Handles tool calling and task management automatically.
         
         Args:
             message: User message
+            timeout: Maximum seconds to wait for response (default: 120)
             
         Returns:
             Response dictionary with text, tasks, and tool calls
         """
+        # Lazy connect to MCP on first use
+        if MCP_ENABLED and not self.mcp_connection_attempted:
+            self.mcp_connection_attempted = True
+            try:
+                await self._connect_bigquery_mcp()
+            except Exception as e:
+                print(f"Warning: Could not connect to BigQuery MCP: {e}")
+        
         if not self.chat:
             self.start_conversation()
         
@@ -387,11 +392,24 @@ class ChatAgent:
         }
         
         try:
-            # Send message to Gemini
-            response = self.chat.send_message(message)
+            # Send message to Gemini with timeout
+            print(f"⏳ Sending message to Gemini (timeout: {timeout}s)...")
+            try:
+                response = self.chat.send_message(
+                    message,
+                    request_options={"timeout": timeout}
+                )
+            except (TimeoutError, FuturesTimeoutError) as e:
+                response_data["text"] = f"⏱️ Request timed out after {timeout} seconds. The LLM took too long to respond. Please try again with a simpler query."
+                response_data["error"] = f"Timeout: {str(e)}"
+                return response_data
             
-            # Handle function calls (tool usage)
-            while response.candidates[0].content.parts:
+            # Handle function calls (tool usage) with timeout tracking
+            max_iterations = 10  # Prevent infinite loops
+            iteration = 0
+            
+            while response.candidates[0].content.parts and iteration < max_iterations:
+                iteration += 1
                 part = response.candidates[0].content.parts[0]
                 
                 # Check if it's a function call
@@ -399,6 +417,8 @@ class ChatAgent:
                     func_call = part.function_call
                     tool_name = func_call.name
                     tool_args = dict(func_call.args)
+                    
+                    print(f"🔧 Executing tool: {tool_name}")
                     
                     # Execute the tool
                     try:
@@ -416,22 +436,29 @@ class ChatAgent:
                             "result": tool_result
                         })
                         
-                        # Send tool result back to model
-                        response = self.chat.send_message(
-                            genai.protos.Content(
-                                parts=[
-                                    genai.protos.Part(
-                                        function_response=genai.protos.FunctionResponse(
-                                            name=tool_name,
-                                            response={"result": tool_result}
+                        # Send tool result back to model with timeout
+                        try:
+                            response = self.chat.send_message(
+                                genai.protos.Content(
+                                    parts=[
+                                        genai.protos.Part(
+                                            function_response=genai.protos.FunctionResponse(
+                                                name=tool_name,
+                                                response={"result": tool_result}
+                                            )
                                         )
-                                    )
-                                ]
+                                    ]
+                                ),
+                                request_options={"timeout": timeout}
                             )
-                        )
+                        except (TimeoutError, FuturesTimeoutError) as e:
+                            response_data["text"] = f"⏱️ Timeout while processing tool result. The LLM took too long to respond."
+                            response_data["error"] = f"Timeout: {str(e)}"
+                            return response_data
                         
                     except Exception as e:
                         error_msg = f"Error executing tool {tool_name}: {str(e)}"
+                        print(f"❌ {error_msg}")
                         response_data["tool_calls"].append({
                             "tool": tool_name,
                             "arguments": tool_args,
@@ -446,13 +473,23 @@ class ChatAgent:
                 else:
                     break
             
+            if iteration >= max_iterations:
+                print(f"⚠️ Maximum iterations ({max_iterations}) reached in tool call loop")
+            
             # Extract final text if not set
             if not response_data["text"] and response.text:
                 response_data["text"] = response.text
             
+        except (TimeoutError, FuturesTimeoutError) as e:
+            response_data["text"] = f"⏱️ Request timed out after {timeout} seconds. Please try again."
+            response_data["error"] = f"Timeout: {str(e)}"
         except Exception as e:
-            response_data["text"] = f"Error: {str(e)}"
-            response_data["error"] = str(e)
+            error_str = str(e)
+            if 'timeout' in error_str.lower() or 'deadline' in error_str.lower():
+                response_data["text"] = f"⏱️ Request timed out. The LLM took too long to respond. Error: {error_str}"
+            else:
+                response_data["text"] = f"Error: {error_str}"
+            response_data["error"] = error_str
         
         return response_data
     
