@@ -131,8 +131,10 @@ Corrected Query:"""
             fixed_query = fixed_query.replace('```sql', '').replace('```', '').strip()
             
             print(f"\n🔧 LLM Fixed Query (Attempt {attempt}):")
-            print(f"Original: {original_query[:100]}...")
-            print(f"Fixed: {fixed_query[:100]}...")
+            print(f"Original Query (full):")
+            print(original_query)
+            print(f"\nFixed Query (full):")
+            print(fixed_query)
             
             return fixed_query
             
@@ -167,7 +169,8 @@ Corrected Query:"""
             if 'LIMIT' not in sql_query.upper():
                 query_to_execute = sql_query.rstrip(';') + ' LIMIT 100'
             
-            print(f"📊 Executing query (timeout: {timeout}s): {query_to_execute[:200]}...")
+            print(f"📊 Executing query (timeout: {timeout}s):")
+            print(query_to_execute)
             
             # Configure job with timeout (removed maximum_bytes_billed as it can cause access denied)
             from google.cloud.bigquery import QueryJobConfig
@@ -261,7 +264,9 @@ Corrected Query:"""
                 "error": error_msg
             })
             
-            print(f"❌ Query failed on attempt {attempt}: {error_msg[:200]}...")
+            print(f"❌ Query failed on attempt {attempt}:")
+            print(f"Error: {error_msg}")
+            print(f"Query: {current_query}")
             
             # If we've exhausted all retries, return detailed error
             if attempt >= max_retries:
@@ -307,12 +312,11 @@ Corrected Query:"""
         for i, error_info in enumerate(error_history, 1):
             error_msg += f"\n--- Attempt {i} ---\n"
             if i > 1:
-                error_msg += f"Query: {error_info['query'][:200]}...\n"
-            error_text = error_info['error'][:300]
-            error_msg += f"Error: {error_text}\n"
+                error_msg += f"Query:\n```sql\n{error_info['query']}\n```\n"
+            error_msg += f"Error: {error_info['error']}\n"
             
             # Check for timeout indicators
-            if 'timeout' in error_text.lower() or 'timed out' in error_text.lower():
+            if 'timeout' in error_info['error'].lower() or 'timed out' in error_info['error'].lower():
                 has_timeout = True
         
         error_msg += "\n💡 Suggestions:\n"

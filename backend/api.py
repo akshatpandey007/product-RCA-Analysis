@@ -92,13 +92,16 @@ async def send_message(request: ChatRequest):
     Send a message to the chat agent.
     
     Args:
-        request: ChatRequest with message and optional timeout
+        request: ChatRequest with message and timeout
         
     Returns:
         ChatResponse with agent's reply
     """
     try:
-        response = await agent.send_message(request.message, timeout=request.timeout)
+        response = await agent.send_message(
+            request.message, 
+            timeout=request.timeout
+        )
         return response
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

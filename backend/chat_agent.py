@@ -283,10 +283,14 @@ class ChatAgent:
         self.mcp_connected = False
         self.mcp_connection_attempted = False
         
-        # Initialize model with tool support
+        # Load system prompt
+        system_prompt = self._load_system_prompt()
+        
+        # Initialize model with tool support and system prompt
         self.model = genai.GenerativeModel(
             model_name=settings.gemini_model,
-            tools=self._get_gemini_tools()
+            tools=self._get_gemini_tools(),
+            system_instruction=system_prompt
         )
         
         # Chat session (handles context automatically)
@@ -356,15 +360,35 @@ class ChatAgent:
             )
         return tool_declarations
     
+    def _load_system_prompt(self) -> str:
+        """
+        Load the system prompt from SYSTEM_PROMPT1.md file.
+        
+        Returns:
+            System prompt string
+        """
+        import os
+        prompt_path = os.path.join(os.path.dirname(__file__), "SYSTEM_PROMPT1.md")
+        try:
+            with open(prompt_path, 'r', encoding='utf-8') as f:
+                return f.read().strip()
+        except FileNotFoundError:
+            print(f"Warning: System prompt file not found at {prompt_path}, using default behavior")
+            return ""
+        except Exception as e:
+            print(f"Warning: Error loading system prompt: {e}, using default behavior")
+            return ""
+    
     def start_conversation(self):
         """Start a new conversation session."""
         self.chat = self.model.start_chat(history=[])
         self.current_task_list = None
     
+    
     async def send_message(self, message: str, timeout: int = 120) -> Dict[str, Any]:
         """
         Send a message to the agent and get a response.
-        Handles tool calling and task management automatically.
+        Handles tool calling automatically.
         
         Args:
             message: User message
@@ -420,9 +444,21 @@ class ChatAgent:
                     
                     print(f"🔧 Executing tool: {tool_name}")
                     
+                    # Log full arguments for SQL queries
+                    if tool_name == "bigquery_query" and "sql_query" in tool_args:
+                        print(f"📝 Full SQL Query:")
+                        print(tool_args["sql_query"])
+                    elif tool_args:
+                        print(f"📝 Tool arguments: {json.dumps(tool_args, indent=2)}")
+                    
                     # Execute the tool
                     try:
                         tool_result = await mcp_tools.execute_tool(tool_name, tool_args)
+                        
+                        # Log full result for debugging
+                        if tool_name == "bigquery_query":
+                            print(f"✅ Query Result (full):")
+                            print(str(tool_result))
                         
                         # Handle task list creation
                         if tool_name == "create_task_list":
@@ -438,13 +474,19 @@ class ChatAgent:
                         
                         # Send tool result back to model with timeout
                         try:
+                            # Format the result for Gemini
+                            if isinstance(tool_result, dict):
+                                formatted_result = tool_result
+                            else:
+                                formatted_result = {"result": str(tool_result)}
+                            
                             response = self.chat.send_message(
                                 genai.protos.Content(
                                     parts=[
                                         genai.protos.Part(
                                             function_response=genai.protos.FunctionResponse(
                                                 name=tool_name,
-                                                response={"result": tool_result}
+                                                response=formatted_result
                                             )
                                         )
                                     ]
@@ -459,6 +501,7 @@ class ChatAgent:
                     except Exception as e:
                         error_msg = f"Error executing tool {tool_name}: {str(e)}"
                         print(f"❌ {error_msg}")
+                        
                         response_data["tool_calls"].append({
                             "tool": tool_name,
                             "arguments": tool_args,
@@ -477,8 +520,23 @@ class ChatAgent:
                 print(f"⚠️ Maximum iterations ({max_iterations}) reached in tool call loop")
             
             # Extract final text if not set
-            if not response_data["text"] and response.text:
-                response_data["text"] = response.text
+            if not response_data["text"]:
+                try:
+                    if hasattr(response, 'text') and response.text:
+                        response_data["text"] = response.text
+                    elif hasattr(response, 'candidates') and response.candidates:
+                        candidate = response.candidates[0]
+                        if hasattr(candidate, 'content') and candidate.content.parts:
+                            for part in candidate.content.parts:
+                                if hasattr(part, 'text') and part.text:
+                                    response_data["text"] = part.text
+                                    break
+                except Exception as e:
+                    print(f"Warning: Could not extract text from response: {e}")
+            
+            # Always include updated task list in response
+            if self.current_task_list:
+                response_data["tasks"] = self.current_task_list.to_dict()
             
         except (TimeoutError, FuturesTimeoutError) as e:
             response_data["text"] = f"⏱️ Request timed out after {timeout} seconds. Please try again."
