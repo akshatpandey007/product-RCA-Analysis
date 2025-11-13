@@ -1,0 +1,38 @@
+═══════════════════════════════════════════════════════════════════════
+                    ⚠️  IMPORTANT FIRST STEP ⚠️
+═══════════════════════════════════════════════════════════════════════
+
+Before you can run the backend, you MUST configure your Gemini API key!
+
+📝 STEPS:
+
+1. Get your FREE Gemini API key:
+   → Visit: https://makersuite.google.com/app/apikey
+   → Sign in with Google
+   → Click "Create API Key"
+   → Copy the key
+
+2. Edit the .env file in this directory (backend/.env):
+   
+   Change this line:
+   GEMINI_API_KEY=your_api_key_here
+   
+   To your actual key:
+   GEMINI_API_KEY=AIzaSyC...your_actual_key_here
+
+3. Save the file
+
+4. Run the server:
+   python api.py
+
+═══════════════════════════════════════════════════════════════════════
+
+That's it! The API will start at http://localhost:8000
+
+Need help? Check:
+- QUICKSTART.md for 5-minute setup
+- README.md for full documentation
+- SETUP_INSTRUCTIONS.md (in parent directory) for complete guide
+
+═══════════════════════════════════════════════════════════════════════
+
