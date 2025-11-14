@@ -164,10 +164,12 @@ Corrected Query:"""
             Tuple of (success: bool, result: str)
         """
         try:
-            # Add safety: limit results if LIMIT not specified
-            query_to_execute = sql_query
-            if 'LIMIT' not in sql_query.upper():
-                query_to_execute = sql_query.rstrip(';') + ' LIMIT 100'
+            # Execute query as-is (LLM is instructed via system prompt to include LIMIT)
+            query_to_execute = sql_query.strip()
+            
+            # Remove trailing semicolon if present
+            if query_to_execute.endswith(';'):
+                query_to_execute = query_to_execute[:-1].strip()
             
             print(f"📊 Executing query (timeout: {timeout}s):")
             print(query_to_execute)

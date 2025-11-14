@@ -1,0 +1,396 @@
+INFO:     Started server process [55520]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+INFO:     127.0.0.1:57990 - "GET /health HTTP/1.1" 200 OK
+⚠️ BigQuery MCP connection failed: object _AsyncGeneratorContextManager can't be used in 'await' expression
+⏳ Sending message to Gemini (timeout: 120s)...
+🔧 Executing tool: bigquery_list_tables
+📝 Tool arguments: {
+  "dataset_id": "ratings_analytics"
+}
+🔧 Executing tool: bigquery_get_schema
+📝 Tool arguments: {
+  "dataset_id": "ratings_analytics",
+  "table_id": "s2s_home_screen_events"
+}
+🔧 Executing tool: bigquery_query
+📝 Full SQL Query:
+SELECT COUNT(DISTINCT identity) FROM ratings_analytics.s2s_home_screen_events WHERE event_date = '2025-11-10' LIMIT 100
+
+============================================================
+Query Attempt 1/3
+============================================================
+📊 Executing query (timeout: 60s):
+SELECT COUNT(DISTINCT identity) FROM ratings_analytics.s2s_home_screen_events WHERE event_date = '2025-11-10' LIMIT 100
+✅ Query Result (full):
+✅ Query returned 1 rows:
+
+f0_
+---
+110607
+
+🔧 Executing tool: bigquery_query
+📝 Full SQL Query:
+SELECT platform, COUNT(DISTINCT identity) as home_screen_users FROM ratings_analytics.s2s_home_screen_events WHERE event_date = '2025-11-10' GROUP BY platform ORDER BY platform LIMIT 100
+
+============================================================
+Query Attempt 1/3
+============================================================
+📊 Executing query (timeout: 60s):
+SELECT platform, COUNT(DISTINCT identity) as home_screen_users FROM ratings_analytics.s2s_home_screen_events WHERE event_date = '2025-11-10' GROUP BY platform ORDER BY platform LIMIT 100
+❌ Query failed on attempt 1:
+Error: Query execution timed out after 60 seconds. The query may be too complex or processing too much data.
+Query: SELECT platform, COUNT(DISTINCT identity) as home_screen_users FROM ratings_analytics.s2s_home_screen_events WHERE event_date = '2025-11-10' GROUP BY platform ORDER BY platform LIMIT 100
+🤖 Asking LLM to fix the query...
+⏳ Waiting for LLM response (timeout: 30s)...
+
+🔧 LLM Fixed Query (Attempt 1):
+Original Query (full):
+SELECT platform, COUNT(DISTINCT identity) as home_screen_users FROM ratings_analytics.s2s_home_screen_events WHERE event_date = '2025-11-10' GROUP BY platform ORDER BY platform LIMIT 100
+
+Fixed Query (full):
+SELECT platform, APPROX_COUNT_DISTINCT(identity) as home_screen_users FROM ratings_analytics.s2s_home_screen_events WHERE event_date = '2025-11-10' GROUP BY platform ORDER BY platform LIMIT 100
+
+============================================================
+Query Attempt 2/3
+============================================================
+📊 Executing query (timeout: 60s):
+SELECT platform, APPROX_COUNT_DISTINCT(identity) as home_screen_users FROM ratings_analytics.s2s_home_screen_events WHERE event_date = '2025-11-10' GROUP BY platform ORDER BY platform LIMIT 100
+❌ Query failed on attempt 2:
+Error: Query execution timed out after 60 seconds. The query may be too complex or processing too much data.
+Query: SELECT platform, APPROX_COUNT_DISTINCT(identity) as home_screen_users FROM ratings_analytics.s2s_home_screen_events WHERE event_date = '2025-11-10' GROUP BY platform ORDER BY platform LIMIT 100
+🤖 Asking LLM to fix the query...
+⏳ Waiting for LLM response (timeout: 30s)...
+
+🔧 LLM Fixed Query (Attempt 2):
+Original Query (full):
+SELECT platform, APPROX_COUNT_DISTINCT(identity) as home_screen_users FROM ratings_analytics.s2s_home_screen_events WHERE event_date = '2025-11-10' GROUP BY platform ORDER BY platform LIMIT 100
+
+Fixed Query (full):
+SELECT
+    t.platform,
+    APPROX_COUNT_DISTINCT(t.identity) AS home_screen_users
+FROM
+    (
+        SELECT
+            platform,
+            identity
+        FROM
+            ratings_analytics.s2s_home_screen_events
+        WHERE
+            event_date = '2025-11-10'
+    ) AS t
+GROUP BY
+    t.platform
+ORDER BY
+    t.platform
+LIMIT 100
+
+============================================================
+Query Attempt 3/3
+============================================================
+📊 Executing query (timeout: 60s):
+SELECT
+    t.platform,
+    APPROX_COUNT_DISTINCT(t.identity) AS home_screen_users
+FROM
+    (
+        SELECT
+            platform,
+            identity
+        FROM
+            ratings_analytics.s2s_home_screen_events
+        WHERE
+            event_date = '2025-11-10'
+    ) AS t
+GROUP BY
+    t.platform
+ORDER BY
+    t.platform
+LIMIT 100
+❌ Query failed on attempt 3:
+Error: Query execution timed out after 60 seconds. The query may be too complex or processing too much data.
+Query: SELECT
+    t.platform,
+    APPROX_COUNT_DISTINCT(t.identity) AS home_screen_users
+FROM
+    (
+        SELECT
+            platform,
+            identity
+        FROM
+            ratings_analytics.s2s_home_screen_events
+        WHERE
+            event_date = '2025-11-10'
+    ) AS t
+GROUP BY
+    t.platform
+ORDER BY
+    t.platform
+LIMIT 100
+✅ Query Result (full):
+❌ Query Failed After Multiple Attempts
+
+Original Query:
+```sql
+SELECT platform, COUNT(DISTINCT identity) as home_screen_users FROM ratings_analytics.s2s_home_screen_events WHERE event_date = '2025-11-10' GROUP BY platform ORDER BY platform LIMIT 100
+```
+
+Attempted 3 times with automatic LLM fixes.
+
+Error History:
+
+--- Attempt 1 ---
+Error: Query execution timed out after 60 seconds. The query may be too complex or processing too much data.
+
+--- Attempt 2 ---
+Query:
+```sql
+SELECT platform, APPROX_COUNT_DISTINCT(identity) as home_screen_users FROM ratings_analytics.s2s_home_screen_events WHERE event_date = '2025-11-10' GROUP BY platform ORDER BY platform LIMIT 100
+```
+Error: Query execution timed out after 60 seconds. The query may be too complex or processing too much data.
+
+--- Attempt 3 ---
+Query:
+```sql
+SELECT
+    t.platform,
+    APPROX_COUNT_DISTINCT(t.identity) AS home_screen_users
+FROM
+    (
+        SELECT
+            platform,
+            identity
+        FROM
+            ratings_analytics.s2s_home_screen_events
+        WHERE
+            event_date = '2025-11-10'
+    ) AS t
+GROUP BY
+    t.platform
+ORDER BY
+    t.platform
+LIMIT 100
+```
+Error: Query execution timed out after 60 seconds. The query may be too complex or processing too much data.
+
+💡 Suggestions:
+⏱️  TIMEOUT DETECTED:
+- The query or LLM is taking too long to respond
+- Try simplifying the query or adding more specific filters
+- Consider using smaller date ranges or LIMIT clauses
+- Check if you're querying very large tables
+
+General tips:
+- Check table names and dataset IDs
+- Verify column names match the schema
+- Ensure you have proper permissions
+- Review BigQuery SQL syntax
+
+🔧 Executing tool: bigquery_query
+📝 Full SQL Query:
+SELECT platform, COUNT(DISTINCT identity) as home_screen_users FROM ratings_analytics.s2s_home_screen_events WHERE event_date = '2025-11-10' GROUP BY platform ORDER BY platform LIMIT 100
+
+============================================================
+Query Attempt 1/3
+============================================================
+📊 Executing query (timeout: 60s):
+SELECT platform, COUNT(DISTINCT identity) as home_screen_users FROM ratings_analytics.s2s_home_screen_events WHERE event_date = '2025-11-10' GROUP BY platform ORDER BY platform LIMIT 100
+✅ Query Result (full):
+✅ Query returned 3 rows:
+
+platform | home_screen_users
+----------------------------
+Android | 106212
+Web | 1319
+iOS | 3222
+
+🔧 Executing tool: bigquery_query
+📝 Full SQL Query:
+SELECT platform, COUNT(DISTINCT identity) as add_to_bag_users FROM ratings_analytics.add_to_bag_with_quantity_events WHERE event_date = '2025-11-10' GROUP BY platform ORDER BY platform LIMIT 100
+
+============================================================
+Query Attempt 1/3
+============================================================
+📊 Executing query (timeout: 60s):
+SELECT platform, COUNT(DISTINCT identity) as add_to_bag_users FROM ratings_analytics.add_to_bag_with_quantity_events WHERE event_date = '2025-11-10' GROUP BY platform ORDER BY platform LIMIT 100
+❌ Query failed on attempt 1:
+Error: Query execution timed out after 60 seconds. The query may be too complex or processing too much data.
+Query: SELECT platform, COUNT(DISTINCT identity) as add_to_bag_users FROM ratings_analytics.add_to_bag_with_quantity_events WHERE event_date = '2025-11-10' GROUP BY platform ORDER BY platform LIMIT 100
+🤖 Asking LLM to fix the query...
+⏳ Waiting for LLM response (timeout: 30s)...
+
+🔧 LLM Fixed Query (Attempt 1):
+Original Query (full):
+SELECT platform, COUNT(DISTINCT identity) as add_to_bag_users FROM ratings_analytics.add_to_bag_with_quantity_events WHERE event_date = '2025-11-10' GROUP BY platform ORDER BY platform LIMIT 100
+
+Fixed Query (full):
+SELECT platform, APPROX_COUNT_DISTINCT(identity) as add_to_bag_users FROM ratings_analytics.add_to_bag_with_quantity_events WHERE event_date = '2025-11-10' GROUP BY platform ORDER BY platform LIMIT 100
+
+============================================================
+Query Attempt 2/3
+============================================================
+📊 Executing query (timeout: 60s):
+SELECT platform, APPROX_COUNT_DISTINCT(identity) as add_to_bag_users FROM ratings_analytics.add_to_bag_with_quantity_events WHERE event_date = '2025-11-10' GROUP BY platform ORDER BY platform LIMIT 100
+❌ Query failed on attempt 2:
+Error: Query execution timed out after 60 seconds. The query may be too complex or processing too much data.
+Query: SELECT platform, APPROX_COUNT_DISTINCT(identity) as add_to_bag_users FROM ratings_analytics.add_to_bag_with_quantity_events WHERE event_date = '2025-11-10' GROUP BY platform ORDER BY platform LIMIT 100
+🤖 Asking LLM to fix the query...
+⏳ Waiting for LLM response (timeout: 30s)...
+
+🔧 LLM Fixed Query (Attempt 2):
+Original Query (full):
+SELECT platform, APPROX_COUNT_DISTINCT(identity) as add_to_bag_users FROM ratings_analytics.add_to_bag_with_quantity_events WHERE event_date = '2025-11-10' GROUP BY platform ORDER BY platform LIMIT 100
+
+Fixed Query (full):
+WITH filtered_events AS (
+    SELECT
+        platform,
+        identity
+    FROM
+        ratings_analytics.add_to_bag_with_quantity_events
+    WHERE
+        event_date = '2025-11-10'
+)
+SELECT
+    platform,
+    APPROX_COUNT_DISTINCT(identity) AS add_to_bag_users
+FROM
+    filtered_events
+GROUP BY
+    platform
+ORDER BY
+    platform
+LIMIT 100
+
+============================================================
+Query Attempt 3/3
+============================================================
+📊 Executing query (timeout: 60s):
+WITH filtered_events AS (
+    SELECT
+        platform,
+        identity
+    FROM
+        ratings_analytics.add_to_bag_with_quantity_events
+    WHERE
+        event_date = '2025-11-10'
+)
+SELECT
+    platform,
+    APPROX_COUNT_DISTINCT(identity) AS add_to_bag_users
+FROM
+    filtered_events
+GROUP BY
+    platform
+ORDER BY
+    platform
+LIMIT 100
+❌ Query failed on attempt 3:
+Error: Query execution timed out after 60 seconds. The query may be too complex or processing too much data.
+Query: WITH filtered_events AS (
+    SELECT
+        platform,
+        identity
+    FROM
+        ratings_analytics.add_to_bag_with_quantity_events
+    WHERE
+        event_date = '2025-11-10'
+)
+SELECT
+    platform,
+    APPROX_COUNT_DISTINCT(identity) AS add_to_bag_users
+FROM
+    filtered_events
+GROUP BY
+    platform
+ORDER BY
+    platform
+LIMIT 100
+✅ Query Result (full):
+❌ Query Failed After Multiple Attempts
+
+Original Query:
+```sql
+SELECT platform, COUNT(DISTINCT identity) as add_to_bag_users FROM ratings_analytics.add_to_bag_with_quantity_events WHERE event_date = '2025-11-10' GROUP BY platform ORDER BY platform LIMIT 100
+```
+
+Attempted 3 times with automatic LLM fixes.
+
+Error History:
+
+--- Attempt 1 ---
+Error: Query execution timed out after 60 seconds. The query may be too complex or processing too much data.
+
+--- Attempt 2 ---
+Query:
+```sql
+SELECT platform, APPROX_COUNT_DISTINCT(identity) as add_to_bag_users FROM ratings_analytics.add_to_bag_with_quantity_events WHERE event_date = '2025-11-10' GROUP BY platform ORDER BY platform LIMIT 100
+```
+Error: Query execution timed out after 60 seconds. The query may be too complex or processing too much data.
+
+--- Attempt 3 ---
+Query:
+```sql
+WITH filtered_events AS (
+    SELECT
+        platform,
+        identity
+    FROM
+        ratings_analytics.add_to_bag_with_quantity_events
+    WHERE
+        event_date = '2025-11-10'
+)
+SELECT
+    platform,
+    APPROX_COUNT_DISTINCT(identity) AS add_to_bag_users
+FROM
+    filtered_events
+GROUP BY
+    platform
+ORDER BY
+    platform
+LIMIT 100
+```
+Error: Query execution timed out after 60 seconds. The query may be too complex or processing too much data.
+
+💡 Suggestions:
+⏱️  TIMEOUT DETECTED:
+- The query or LLM is taking too long to respond
+- Try simplifying the query or adding more specific filters
+- Consider using smaller date ranges or LIMIT clauses
+- Check if you're querying very large tables
+
+General tips:
+- Check table names and dataset IDs
+- Verify column names match the schema
+- Ensure you have proper permissions
+- Review BigQuery SQL syntax
+
+🔧 Executing tool: bigquery_query
+📝 Full SQL Query:
+SELECT platform, COUNT(DISTINCT identity) as add_to_bag_users FROM ratings_analytics.add_to_bag_with_quantity_events WHERE event_date = '2025-11-10' GROUP BY platform ORDER BY platform LIMIT 100
+
+============================================================
+Query Attempt 1/3
+============================================================
+📊 Executing query (timeout: 60s):
+SELECT platform, COUNT(DISTINCT identity) as add_to_bag_users FROM ratings_analytics.add_to_bag_with_quantity_events WHERE event_date = '2025-11-10' GROUP BY platform ORDER BY platform LIMIT 100
+✅ Query Result (full):
+✅ Query returned 2 rows:
+
+platform | add_to_bag_users
+---------------------------
+Android | 52600
+iOS | 1692
+
+🔧 Executing tool: bigquery_query
+📝 Full SQL Query:
+SELECT platform, COUNT(DISTINCT identity) as home_screen_users FROM ratings_analytics.s2s_home_screen_events WHERE event_date = '2025-11-09' GROUP BY platform ORDER BY platform LIMIT 100
+
+============================================================
+Query Attempt 1/3
+============================================================
+📊 Executing query (timeout: 60s):
+SELECT platform, COUNT(DISTINCT identity) as home_screen_users FROM ratings_analytics.s2s_home_screen_events WHERE event_date = '2025-11-09' GROUP BY platform ORDER BY platform LIMIT 100

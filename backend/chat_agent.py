@@ -249,13 +249,13 @@ if MCP_ENABLED and settings.enable_bigquery_mcp:
     
     mcp_tools.register_tool(
         name="bigquery_query",
-        description="Execute a SQL query on BigQuery. Use this to analyze data, get insights, and answer questions about the data. The query will automatically be limited to 100 rows if no LIMIT is specified for safety.",
+        description="Execute a SQL query on BigQuery. Use this to analyze data, get insights, and answer questions about the data. IMPORTANT: Always include 'LIMIT 100' at the end of your main query unless specifically asked for more rows.",
         parameters={
             "type": "object",
             "properties": {
                 "query": {
                     "type": "string",
-                    "description": "The BigQuery SQL query to execute. Use backticks for table names like `project.dataset.table`"
+                    "description": "The BigQuery SQL query to execute. Use backticks for table names like `project.dataset.table`. Always add 'LIMIT 100' to the main query for performance."
                 }
             },
             "required": ["query"]
@@ -429,91 +429,105 @@ class ChatAgent:
                 return response_data
             
             # Handle function calls (tool usage) with timeout tracking
-            max_iterations = 10  # Prevent infinite loops
+            max_iterations = 20  # Allow comprehensive RCA with payment method analysis and drill-downs
             iteration = 0
             
             while response.candidates[0].content.parts and iteration < max_iterations:
                 iteration += 1
-                part = response.candidates[0].content.parts[0]
                 
-                # Check if it's a function call
-                if hasattr(part, 'function_call') and part.function_call:
-                    func_call = part.function_call
-                    tool_name = func_call.name
-                    tool_args = dict(func_call.args)
-                    
-                    print(f"🔧 Executing tool: {tool_name}")
-                    
-                    # Log full arguments for SQL queries
-                    if tool_name == "bigquery_query" and "sql_query" in tool_args:
-                        print(f"📝 Full SQL Query:")
-                        print(tool_args["sql_query"])
-                    elif tool_args:
-                        print(f"📝 Tool arguments: {json.dumps(tool_args, indent=2)}")
-                    
-                    # Execute the tool
-                    try:
-                        tool_result = await mcp_tools.execute_tool(tool_name, tool_args)
+                # Check for function calls in ALL parts first (prioritize tool execution)
+                has_function_call = False
+                for part in response.candidates[0].content.parts:
+                    if hasattr(part, 'function_call') and part.function_call:
+                        has_function_call = True
+                        func_call = part.function_call
+                        tool_name = func_call.name
+                        tool_args = dict(func_call.args)
                         
-                        # Log full result for debugging
+                        print(f"🔧 Executing tool: {tool_name}")
+                        
+                        # Log full arguments for SQL queries
                         if tool_name == "bigquery_query":
-                            print(f"✅ Query Result (full):")
-                            print(str(tool_result))
-                        
-                        # Handle task list creation
-                        if tool_name == "create_task_list":
-                            self.current_task_list = TaskList(**tool_result)
-                            response_data["tasks"] = self.current_task_list.to_dict()
-                        
-                        # Record tool call
-                        response_data["tool_calls"].append({
-                            "tool": tool_name,
-                            "arguments": tool_args,
-                            "result": tool_result
-                        })
-                        
-                        # Send tool result back to model with timeout
-                        try:
-                            # Format the result for Gemini
-                            if isinstance(tool_result, dict):
-                                formatted_result = tool_result
+                            if "query" in tool_args:
+                                print(f"📝 Full SQL Query:")
+                                print(tool_args["query"])
+                            elif "sql_query" in tool_args:
+                                print(f"📝 Full SQL Query (sql_query param):")
+                                print(tool_args["sql_query"])
                             else:
-                                formatted_result = {"result": str(tool_result)}
+                                print(f"📝 Tool arguments: {json.dumps(tool_args, indent=2)}")
+                        elif tool_args:
+                            print(f"📝 Tool arguments: {json.dumps(tool_args, indent=2)}")
+                        
+                        # Execute the tool
+                        try:
+                            tool_result = await mcp_tools.execute_tool(tool_name, tool_args)
                             
-                            response = self.chat.send_message(
-                                genai.protos.Content(
-                                    parts=[
-                                        genai.protos.Part(
-                                            function_response=genai.protos.FunctionResponse(
-                                                name=tool_name,
-                                                response=formatted_result
+                            # Log full result for debugging
+                            if tool_name == "bigquery_query":
+                                print(f"✅ Query Result (full):")
+                                print(str(tool_result))
+                            
+                            # Handle task list creation
+                            if tool_name == "create_task_list":
+                                self.current_task_list = TaskList(**tool_result)
+                                response_data["tasks"] = self.current_task_list.to_dict()
+                            
+                            # Record tool call
+                            response_data["tool_calls"].append({
+                                "tool": tool_name,
+                                "arguments": tool_args,
+                                "result": tool_result
+                            })
+                            
+                            # Send tool result back to model with timeout
+                            try:
+                                # Format the result for Gemini
+                                if isinstance(tool_result, dict):
+                                    formatted_result = tool_result
+                                else:
+                                    formatted_result = {"result": str(tool_result)}
+                                
+                                response = self.chat.send_message(
+                                    genai.protos.Content(
+                                        parts=[
+                                            genai.protos.Part(
+                                                function_response=genai.protos.FunctionResponse(
+                                                    name=tool_name,
+                                                    response=formatted_result
+                                                )
                                             )
-                                        )
-                                    ]
-                                ),
-                                request_options={"timeout": timeout}
-                            )
-                        except (TimeoutError, FuturesTimeoutError) as e:
-                            response_data["text"] = f"⏱️ Timeout while processing tool result. The LLM took too long to respond."
-                            response_data["error"] = f"Timeout: {str(e)}"
-                            return response_data
+                                        ]
+                                    ),
+                                    request_options={"timeout": timeout}
+                                )
+                            except (TimeoutError, FuturesTimeoutError) as e:
+                                response_data["text"] = f"⏱️ Timeout while processing tool result. The LLM took too long to respond."
+                                response_data["error"] = f"Timeout: {str(e)}"
+                                return response_data
+                            
+                        except Exception as e:
+                            error_msg = f"Error executing tool {tool_name}: {str(e)}"
+                            print(f"❌ {error_msg}")
+                            
+                            response_data["tool_calls"].append({
+                                "tool": tool_name,
+                                "arguments": tool_args,
+                                "error": error_msg
+                            })
+                            has_function_call = False  # Stop loop on error
+                            break
                         
-                    except Exception as e:
-                        error_msg = f"Error executing tool {tool_name}: {str(e)}"
-                        print(f"❌ {error_msg}")
-                        
-                        response_data["tool_calls"].append({
-                            "tool": tool_name,
-                            "arguments": tool_args,
-                            "error": error_msg
-                        })
+                        # Break after processing first function call, will continue loop
                         break
                 
-                # Get text response
-                elif hasattr(part, 'text'):
-                    response_data["text"] = part.text
-                    break
-                else:
+                # Only process text if there are NO function calls
+                if not has_function_call:
+                    for part in response.candidates[0].content.parts:
+                        if hasattr(part, 'text') and part.text:
+                            response_data["text"] = part.text
+                            break
+                    # Exit the main loop when no function calls remain
                     break
             
             if iteration >= max_iterations:
@@ -533,6 +547,52 @@ class ChatAgent:
                                     break
                 except Exception as e:
                     print(f"Warning: Could not extract text from response: {e}")
+            
+            # Clean up tool response JSON that sometimes gets included in the text
+            if response_data["text"]:
+                import re
+                # Remove ALL JSON objects that look like tool responses (handle multiple blocks)
+                original_text = response_data["text"]
+                cleaned_count = 0
+                
+                # Keep removing JSON blocks from the beginning until none are found
+                while original_text.strip().startswith('{'):
+                    try:
+                        # Find the matching closing brace
+                        brace_count = 0
+                        end_pos = 0
+                        for i, char in enumerate(original_text):
+                            if char == '{':
+                                brace_count += 1
+                            elif char == '}':
+                                brace_count -= 1
+                                if brace_count == 0:
+                                    end_pos = i + 1
+                                    break
+                        
+                        if end_pos > 0:
+                            # Check if this looks like a tool response
+                            json_part = original_text[:end_pos]
+                            if any(key in json_part for key in ['"bigquery_query_response"', '"bigquery_get_schema_response"', '"result"', '"error"']):
+                                original_text = original_text[end_pos:].strip()
+                                cleaned_count += 1
+                            else:
+                                # Not a tool response, stop cleaning
+                                break
+                        else:
+                            break
+                    except Exception as e:
+                        print(f"Warning: Error cleaning JSON from text: {e}")
+                        break
+                
+                if cleaned_count > 0:
+                    if original_text:
+                        print(f"🧹 Cleaned {cleaned_count} tool response JSON block(s) from text output")
+                        response_data["text"] = original_text
+                    else:
+                        print(f"⚠️ LLM returned only tool response JSON ({cleaned_count} blocks) without natural language text")
+                        # Keep the original if cleaning removed everything
+                        response_data["text"] = response_data["text"]
             
             # Always include updated task list in response
             if self.current_task_list:

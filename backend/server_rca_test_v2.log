@@ -1,0 +1,106 @@
+INFO:     Started server process [55392]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+INFO:     127.0.0.1:57795 - "GET /health HTTP/1.1" 200 OK
+⚠️ BigQuery MCP connection failed: object _AsyncGeneratorContextManager can't be used in 'await' expression
+⏳ Sending message to Gemini (timeout: 120s)...
+🔧 Executing tool: bigquery_list_tables
+📝 Tool arguments: {
+  "dataset_id": "ratings_analytics"
+}
+🔧 Executing tool: bigquery_get_schema
+📝 Tool arguments: {
+  "dataset_id": "ratings_analytics",
+  "table_id": "s2s_home_screen_events"
+}
+🔧 Executing tool: bigquery_get_schema
+📝 Tool arguments: {
+  "table_id": "add_to_bag_with_quantity_events",
+  "dataset_id": "ratings_analytics"
+}
+🔧 Executing tool: bigquery_get_schema
+📝 Tool arguments: {
+  "table_id": "cart_info_events",
+  "dataset_id": "ratings_analytics"
+}
+🔧 Executing tool: bigquery_get_schema
+📝 Tool arguments: {
+  "dataset_id": "ratings_analytics",
+  "table_id": "proceed_to_pay_click_events"
+}
+🔧 Executing tool: bigquery_get_schema
+📝 Tool arguments: {
+  "dataset_id": "ratings_analytics",
+  "table_id": "charged_events"
+}
+🔧 Executing tool: bigquery_query
+📝 Full SQL Query:
+SELECT COUNT(DISTINCT identity) FROM `ratings_analytics.s2s_home_screen_events` WHERE event_date = '2025-11-10' LIMIT 100
+
+============================================================
+Query Attempt 1/3
+============================================================
+📊 Executing query (timeout: 60s):
+SELECT COUNT(DISTINCT identity) FROM `ratings_analytics.s2s_home_screen_events` WHERE event_date = '2025-11-10' LIMIT 100
+✅ Query Result (full):
+✅ Query returned 1 rows:
+
+f0_
+---
+110607
+
+🔧 Executing tool: bigquery_query
+📝 Full SQL Query:
+SELECT COUNT(DISTINCT identity) FROM `ratings_analytics.s2s_home_screen_events` WHERE event_date = '2025-11-09' LIMIT 100
+
+============================================================
+Query Attempt 1/3
+============================================================
+📊 Executing query (timeout: 60s):
+SELECT COUNT(DISTINCT identity) FROM `ratings_analytics.s2s_home_screen_events` WHERE event_date = '2025-11-09' LIMIT 100
+✅ Query Result (full):
+✅ Query returned 1 rows:
+
+f0_
+---
+118942
+
+🔧 Executing tool: bigquery_query
+📝 Full SQL Query:
+SELECT COUNT(DISTINCT identity) FROM `ratings_analytics.add_to_bag_with_quantity_events` WHERE event_date = '2025-11-10' LIMIT 100
+
+============================================================
+Query Attempt 1/3
+============================================================
+📊 Executing query (timeout: 60s):
+SELECT COUNT(DISTINCT identity) FROM `ratings_analytics.add_to_bag_with_quantity_events` WHERE event_date = '2025-11-10' LIMIT 100
+✅ Query Result (full):
+✅ Query returned 1 rows:
+
+f0_
+---
+54280
+
+🔧 Executing tool: bigquery_query
+📝 Full SQL Query:
+SELECT COUNT(DISTINCT identity) FROM `ratings_analytics.add_to_bag_with_quantity_events` WHERE event_date = '2025-11-09' LIMIT 100
+
+============================================================
+Query Attempt 1/3
+============================================================
+📊 Executing query (timeout: 60s):
+SELECT COUNT(DISTINCT identity) FROM `ratings_analytics.add_to_bag_with_quantity_events` WHERE event_date = '2025-11-09' LIMIT 100
+✅ Query Result (full):
+✅ Query returned 1 rows:
+
+f0_
+---
+61172
+
+⚠️ Maximum iterations (10) reached in tool call loop
+INFO:     127.0.0.1:57800 - "POST /chat/message HTTP/1.1" 200 OK
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [55392]
