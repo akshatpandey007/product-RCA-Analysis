@@ -512,8 +512,17 @@ class ChatAgent:
             max_iterations = 10  # Prevent infinite loops
             iteration = 0
             
-            while response.candidates[0].content.parts and iteration < max_iterations:
+            # Safety check: ensure we have candidates
+            if not response.candidates or len(response.candidates) == 0:
+                print("⚠️ No candidates in response")
+                response_data["text"] = "No response generated. Please try again."
+                return response_data
+            
+            while response and response.candidates and response.candidates[0].content.parts and iteration < max_iterations:
                 iteration += 1
+                print(f"\n{'='*80}")
+                print(f"🔄 ITERATION {iteration}/{max_iterations}")
+                print(f"{'='*80}")
                 part = response.candidates[0].content.parts[0]
                 
                 # Check if it's a function call
@@ -524,14 +533,20 @@ class ChatAgent:
                     
                     print(f"🔧 Executing tool: {tool_name}")
                     
-                    # Log full arguments for SQL queries
+                    # Log full arguments for SQL queries with prominent formatting
                     if tool_name == "bigquery_query":
+                        sql_query = None
                         if "query" in tool_args:
-                            print(f"📝 Full SQL Query:")
-                            print(tool_args["query"])
+                            sql_query = tool_args["query"]
                         elif "sql_query" in tool_args:
-                            print(f"📝 Full SQL Query (sql_query param):")
-                            print(tool_args["sql_query"])
+                            sql_query = tool_args["sql_query"]
+                        
+                        if sql_query:
+                            print(f"\n{'='*80}")
+                            print(f"📝 SQL QUERY EXECUTED BY GEMINI:")
+                            print(f"{'='*80}")
+                            print(sql_query)
+                            print(f"{'='*80}\n")
                         else:
                             print(f"📝 Tool arguments: {json.dumps(tool_args, indent=2)}")
                     elif tool_args:
@@ -543,10 +558,13 @@ class ChatAgent:
                         
                         # Log full result for debugging
                         if tool_name == "bigquery_query":
-                            print(f"✅ Query Result (full):")
+                            print(f"\n{'='*80}")
+                            print(f"✅ SQL QUERY RESULT:")
+                            print(f"{'='*80}")
                             print(str(tool_result))
+                            print(f"{'='*80}\n")
                             
-                            # Check if query failed
+                            # Check if query failed or returned no results
                             tool_result_str = str(tool_result)
                             query_failed = (
                                 "Query Failed" in tool_result_str or 
@@ -556,8 +574,17 @@ class ChatAgent:
                                 "not found" in tool_result_str.lower()
                             )
                             
+                            # Check if query returned zero results
+                            no_results = (
+                                "returned 0 rows" in tool_result_str.lower() or
+                                "no results" in tool_result_str.lower() or
+                                "Query executed successfully but returned no results" in tool_result_str
+                            )
+                            
                             if query_failed:
                                 print("⚠️ Query execution failed - will prompt LLM to fix and continue")
+                            elif no_results:
+                                print("⚠️ Query returned zero results - will prompt LLM to find available dates")
                         
                         # Handle task list creation
                         if tool_name == "create_task_list":
@@ -579,17 +606,37 @@ class ChatAgent:
                             else:
                                 formatted_result = {"result": str(tool_result)}
                             
+                            # Add instruction to ALL tool results: process internally, never return JSON
+                            tool_result_str = str(tool_result)
+                            
+                            # Base instruction: never return JSON structures
+                            base_instruction = "🔧 CRITICAL: Process this tool result internally. Extract the information you need. Do NOT return this JSON structure or any JSON to the user. Convert everything to natural language only. Never show tool response formats like {\"bigquery_query_response\": {...}} to the user.\n\n"
+                            
                             # If query failed, add explicit instruction to fix and continue
                             if tool_name == "bigquery_query":
-                                tool_result_str = str(tool_result)
                                 if ("Query Failed" in tool_result_str or 
                                     "❌" in tool_result_str or
                                     ("Error:" in tool_result_str and "Query" in tool_result_str)):
                                     
-                                    # Prepend instruction to the error message
-                                    instruction = "\n\n🔧 INSTRUCTION: The query failed. Analyze the error message above, identify the issue (e.g., wrong column name, syntax error), fix the SQL query, and immediately call bigquery_query again with the corrected query. Do NOT return text to the user - continue with the fixed query execution.\n"
-                                    formatted_result = {"result": instruction + str(tool_result)}
+                                    # Prepend both instructions
+                                    instruction = base_instruction + "🔧 INSTRUCTION: The query failed. Analyze the error message above, identify the issue (e.g., wrong column name, syntax error), fix the SQL query, and immediately call bigquery_query again with the corrected query. Do NOT return text to the user - continue with the fixed query execution.\n\n"
+                                    formatted_result = {"result": instruction + tool_result_str}
                                     print("📝 Added fix-and-continue instruction for failed query")
+                                elif (no_results or 
+                                      "returned 0 rows" in tool_result_str.lower() or
+                                      "no results" in tool_result_str.lower() or
+                                      "Query executed successfully but returned no results" in tool_result_str):
+                                    # Query returned zero results - instruct to find available dates
+                                    date_finding_instruction = base_instruction + "🔧 CRITICAL - ZERO RESULTS DETECTED: This query returned zero results. DO NOT give up or return 'no data'. Instead: (1) First query to find available dates using: SELECT DISTINCT event_date FROM ratings_analytics.table_name ORDER BY event_date DESC LIMIT 10, (2) Use the most recent available date with data, (3) If the requested date has no data, automatically use the most recent available date instead, (4) Check dates going backwards (D-1, D-2, D-3, etc.) until you find data, (5) Only report 'no data' if you've checked the last 30 days and found nothing. ALWAYS find and use available data.\n\n"
+                                    formatted_result = {"result": date_finding_instruction + tool_result_str}
+                                    print("📝 Added date-finding instruction for zero results")
+                                else:
+                                    # Query succeeded - add validation instruction
+                                    validation_instruction = "🔧 VALIDATION: Before reporting on any segment (e.g., 'Bronze Android users'), verify that this combination actually exists in the query results above with non-zero counts. Only report on segments that appear in the actual query results. Never report on segments that don't exist in the data.\n\n"
+                                    formatted_result = {"result": base_instruction + validation_instruction + tool_result_str}
+                            else:
+                                # For all other tools, add the no-JSON instruction
+                                formatted_result = {"result": base_instruction + tool_result_str}
                             
                             response = self.chat.send_message(
                                 genai.protos.Content(
@@ -625,6 +672,11 @@ class ChatAgent:
                             response_data["text"] = f"⏱️ Timeout while processing tool result. The LLM took too long to respond."
                             response_data["error"] = f"Timeout: {str(e)}"
                             return response_data
+                        except Exception as e:
+                            error_msg = f"Error sending tool result to model: {str(e)}"
+                            print(f"❌ {error_msg}")
+                            # Break the loop if we can't send tool result
+                            break
                         
                     except Exception as e:
                         error_msg = f"Error executing tool {tool_name}: {str(e)}"
@@ -639,7 +691,69 @@ class ChatAgent:
                 
                 # Get text response
                 elif hasattr(part, 'text'):
-                    response_data["text"] = part.text
+                    text_content = part.text
+                    
+                    # Check if text contains JSON patterns - if so, send continuation message
+                    json_indicators = [
+                        r'\{"bigquery_query_response"',
+                        r'\{"bigquery_get_schema_response"',
+                        r'\{"bigquery_list_tables_response"',
+                        r'\{"[^"]+_response"\s*:',
+                    ]
+                    
+                    has_json_in_text = False
+                    for pattern in json_indicators:
+                        if re.search(pattern, text_content):
+                            has_json_in_text = True
+                            print(f"⚠️ Detected JSON in text response - sending continuation message to force query execution")
+                            break
+                    
+                    if has_json_in_text:
+                        # Clear the text so it doesn't get returned
+                        response_data["text"] = ""
+                        # Send a message to Gemini to continue with query execution
+                        try:
+                            # Determine context-aware continuation message
+                            if any("bigquery_get_schema" in call.get("tool", "") for call in response_data.get("tool_calls", [])):
+                                continuation_msg = "You have the schema information. Now execute the SQL queries to get the data. Do NOT return JSON structures. Process tool results internally, execute queries, and complete all steps before returning any text."
+                            elif any("bigquery_query" in call.get("tool", "") for call in response_data.get("tool_calls", [])):
+                                continuation_msg = "Continue executing the remaining queries. Do NOT return JSON structures. Process all tool results internally and complete the full analysis before returning any text."
+                            else:
+                                continuation_msg = "Continue executing the queries. Do NOT return JSON structures. Process tool results internally and execute the next query. Complete all steps before returning any text."
+                            
+                            print(f"\n{'='*80}")
+                            print(f"🔄 SENDING CONTINUATION MESSAGE TO GEMINI:")
+                            print(f"{'='*80}")
+                            print(continuation_msg)
+                            print(f"{'='*80}\n")
+                            
+                            response = self.chat.send_message(
+                                continuation_msg,
+                                request_options={"timeout": timeout}
+                            )
+                            
+                            print(f"📥 CONTINUATION RESPONSE RECEIVED:")
+                            if hasattr(response, 'candidates') and response.candidates:
+                                candidate = response.candidates[0]
+                                finish_reason = getattr(candidate, 'finish_reason', None)
+                                print(f"   Finish reason: {finish_reason}")
+                                if hasattr(candidate, 'content') and candidate.content.parts:
+                                    for part in candidate.content.parts:
+                                        if hasattr(part, 'function_call') and part.function_call:
+                                            print(f"   Function call detected: {part.function_call.name}")
+                                        elif hasattr(part, 'text') and part.text:
+                                            print(f"   Text response: {part.text[:200]}...")
+                            
+                            # Don't increment iteration here - we'll increment at the start of next loop
+                            # Continue the loop to process the new response
+                            iteration -= 1  # Decrement so next iteration doesn't skip
+                            continue
+                        except Exception as e:
+                            print(f"⚠️ Error sending continuation message: {e}")
+                            break
+                    else:
+                        # No JSON detected - this is valid text response
+                        response_data["text"] = text_content
                     break
                 else:
                     break
@@ -653,14 +767,33 @@ class ChatAgent:
                 print(f"📊 EXECUTION PLAN SUMMARY:")
                 print(f"{'='*80}")
                 print(f"Total tools executed: {len(response_data['tool_calls'])}")
+                
+                # Track SQL queries separately for prominent display
+                sql_queries = []
                 for i, tool_call in enumerate(response_data['tool_calls'], 1):
                     tool_name = tool_call.get('tool', 'unknown')
                     print(f"  {i}. {tool_name}")
                     if tool_name == "bigquery_query" and "arguments" in tool_call:
                         query = tool_call["arguments"].get("query") or tool_call["arguments"].get("sql_query", "")
                         if query:
-                            print(f"     Query: {query[:100]}..." if len(query) > 100 else f"     Query: {query}")
-                print(f"{'='*80}\n")
+                            sql_queries.append(query)
+                            print(f"     SQL Query:")
+                            # Print full query with indentation
+                            for line in query.split('\n'):
+                                print(f"       {line}")
+                
+                # Show SQL queries summary prominently
+                if sql_queries:
+                    print(f"\n{'='*80}")
+                    print(f"📝 ALL SQL QUERIES EXECUTED ({len(sql_queries)} total):")
+                    print(f"{'='*80}")
+                    for i, query in enumerate(sql_queries, 1):
+                        print(f"\n--- Query {i} ---")
+                        print(query)
+                    print(f"{'='*80}\n")
+                else:
+                    print(f"\n⚠️ NO SQL QUERIES WERE EXECUTED")
+                    print(f"{'='*80}\n")
             
             # Extract final text if not set
             if not response_data["text"]:
@@ -711,8 +844,14 @@ class ChatAgent:
                     r'\{"bigquery_query_response"',
                     r'\{"bigquery_get_schema_response"',
                     r'\{"bigquery_list_tables_response"',
+                    r'\{"bigquery_list_datasets_response"',
                     r'\{"tool_response"',
-                    r'\{"result"\s*:\s*\{'
+                    r'\{"result"\s*:\s*\{',
+                    r'\{"[^"]+_response"\s*:',  # Any ..._response pattern
+                    r'\{[^{}]*"[^"]*response[^"]*"',  # Any JSON containing "response"
+                    r'\{"[^"]*query[^"]*"\s*:\s*\{',  # Query-related JSON
+                    r'\{"[^"]*schema[^"]*"\s*:\s*\{',  # Schema-related JSON
+                    r'\{"[^"]*table[^"]*"\s*:\s*\{',  # Table-related JSON
                 ]
                 
                 has_json = False
@@ -723,55 +862,81 @@ class ChatAgent:
                         break
                 
                 if has_json:
-                    # Try to extract and remove the JSON part
+                    # Aggressively strip ALL JSON patterns using regex
                     try:
-                        # First try simple approach: find }\n or }\n (with actual newline)
-                        json_end = -1
-                        # Try different patterns for JSON end
-                        patterns = [
-                            ('}\n', 2),  # }\n with actual newline
-                            ('}\\n', 2),  # }\n as escaped string
-                            ('}\n\n', 3),  # }\n\n (double newline)
-                        ]
+                        cleaned_text = text
                         
-                        for pattern, offset in patterns:
-                            pos = text.find(pattern)
-                            if pos > 0:
-                                json_end = pos
+                        # Use a more robust approach: find and remove JSON blocks by matching braces
+                        # This handles deeply nested JSON structures
+                        def remove_json_blocks(text):
+                            """Remove all JSON blocks that match our patterns"""
+                            result = text
+                            
+                            # Find all JSON blocks that start with {"..._response"
+                            # Match from opening { to matching closing }
+                            pattern = r'\{"[^"]+_response"\s*:\s*\{'
+                            matches = list(re.finditer(pattern, result))
+                            
+                            # Process matches in reverse to maintain indices
+                            for match in reversed(matches):
+                                start = match.start()
+                                # Find matching closing brace
+                                brace_count = 0
+                                json_end = -1
+                                for i in range(start, len(result)):
+                                    if result[i] == '{':
+                                        brace_count += 1
+                                    elif result[i] == '}':
+                                        brace_count -= 1
+                                        if brace_count == 0:
+                                            json_end = i
+                                            break
+                                
+                                if json_end > start:
+                                    # Remove this JSON block
+                                    result = result[:start] + result[json_end + 1:]
+                            
+                            return result
+                        
+                        # Remove JSON blocks using brace matching
+                        cleaned_text = remove_json_blocks(cleaned_text)
+                        
+                        # Additional regex patterns for simpler cases
+                        # Pattern 1: Remove {..._response": "..."} (simple string values)
+                        pattern1 = r'\{"[^"]+_response"\s*:\s*"[^"]*"\s*\}'
+                        cleaned_text = re.sub(pattern1, '', cleaned_text)
+                        
+                        # Pattern 2: Remove {"result": "..."} patterns
+                        pattern2 = r'\{"result"\s*:\s*"[^"]*"\s*\}'
+                        cleaned_text = re.sub(pattern2, '', cleaned_text)
+                        
+                        # Pattern 3: Remove any remaining JSON that contains "response"
+                        pattern3 = r'\{[^{}]*"[^"]*response[^"]*"[^{}]*\}'
+                        cleaned_text = re.sub(pattern3, '', cleaned_text, flags=re.DOTALL)
+                        
+                        # Clean up: remove multiple spaces, newlines, and trim
+                        cleaned_text = re.sub(r'\s+', ' ', cleaned_text).strip()
+                        
+                        # Check if cleaned text still contains JSON patterns
+                        still_has_json = False
+                        for pattern in json_indicators:
+                            if re.search(pattern, cleaned_text):
+                                still_has_json = True
                                 break
                         
-                        # If simple approach didn't work, try brace counting
-                        if json_end == -1:
-                            brace_count = 0
-                            json_start = -1
-                            
-                            for i, char in enumerate(text):
-                                if char == '{':
-                                    if json_start == -1:
-                                        json_start = i
-                                    brace_count += 1
-                                elif char == '}':
-                                    brace_count -= 1
-                                    if brace_count == 0 and json_start != -1:
-                                        json_end = i
-                                        break
+                        # Also check if it starts with { or [ (likely JSON)
+                        if cleaned_text.startswith('{') or cleaned_text.startswith('['):
+                            still_has_json = True
                         
-                        if json_end > 0:
-                            # Extract text after JSON
-                            # Try different offsets
-                            for offset in [2, 3, 1]:
-                                remaining = text[json_end + offset:].strip()
-                                if remaining and not remaining.startswith('}'):
-                                    response_data["text"] = remaining
-                                    print(f"✅ Cleaned response: removed JSON, kept: {remaining[:100]}...")
-                                    break
-                            else:
-                                # If nothing found, clear it
-                                response_data["text"] = ""
-                                print("⚠️ Response was only JSON - clearing to force continuation")
-                        else:
-                            print("⚠️ Could not find JSON end - clearing response")
+                        if still_has_json or not cleaned_text or len(cleaned_text) < 10:
+                            # Still has JSON or is too short - clear entirely to force continuation
                             response_data["text"] = ""
+                            print("⚠️ Response still contains JSON after cleaning - clearing to force continuation")
+                        else:
+                            # Use cleaned text
+                            response_data["text"] = cleaned_text
+                            print(f"✅ Cleaned response: removed all JSON patterns, kept: {cleaned_text[:100]}...")
+                            
                     except Exception as e:
                         print(f"⚠️ Error cleaning JSON from response: {e} - clearing response")
                         response_data["text"] = ""
@@ -779,6 +944,53 @@ class ChatAgent:
                 # Check if response looks incomplete (ends mid-sentence or is very short after tool calls)
                 if response_data.get("tool_calls") and len(text) < 50:
                     print("⚠️ Response seems incomplete after tool calls - may need continuation")
+            
+            # If we executed tool calls but have no final text, request a summary
+            if response_data.get("tool_calls") and not response_data.get("text"):
+                print("⚠️ Tool calls executed but no final text - requesting summary from Gemini")
+                try:
+                    summary_request = "Based on all the tool results you just processed, provide a complete summary of your findings in natural language. Do NOT return any JSON structures. Convert all the data you analyzed into a clear, conversational explanation."
+                    final_response = self.chat.send_message(
+                        summary_request,
+                        request_options={"timeout": timeout}
+                    )
+                    
+                    # Extract text from final response
+                    if hasattr(final_response, 'text') and final_response.text:
+                        final_text = final_response.text.strip()
+                        # Check for JSON one more time
+                        if not (final_text.startswith("{") or final_text.startswith("[")):
+                            # Check for embedded JSON patterns
+                            json_patterns = [
+                                r'\{"bigquery_query_response"',
+                                r'\{"bigquery_get_schema_response"',
+                                r'\{"bigquery_list_tables_response"',
+                                r'\{"[^"]+_response"\s*:',
+                            ]
+                            has_json = False
+                            for pattern in json_patterns:
+                                if re.search(pattern, final_text):
+                                    has_json = True
+                                    break
+                            if not has_json:
+                                response_data["text"] = final_text
+                                print("✅ Got final summary from Gemini")
+                    elif hasattr(final_response, 'candidates') and final_response.candidates:
+                        candidate = final_response.candidates[0]
+                        if hasattr(candidate, 'content') and candidate.content.parts:
+                            for part in candidate.content.parts:
+                                if hasattr(part, 'text') and part.text:
+                                    final_text = part.text.strip()
+                                    # Quick JSON check
+                                    if not (final_text.startswith("{") or final_text.startswith("[")):
+                                        response_data["text"] = final_text
+                                        print("✅ Got final summary from Gemini")
+                                        break
+                except Exception as e:
+                    print(f"⚠️ Error requesting summary: {e}")
+                    # If we still have no text, provide a default message
+                    if not response_data.get("text"):
+                        response_data["text"] = "Analysis completed. Please check the tool calls for details or try rephrasing your query."
             
             # Always include updated task list in response
             if self.current_task_list:

@@ -329,16 +329,25 @@
                     })
                 });
 
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+
                 const data = await response.json();
+                console.log('Response data:', data); // Debug log
                 
                 // Hide typing indicator
                 typingIndicator.classList.remove('active');
                 
                 // Add assistant response
-                if (data.text) {
+                if (data.text && data.text.trim()) {
                     addMessage('assistant', data.text, data.tool_calls);
                 } else if (data.error) {
                     addMessage('assistant', `Error: ${data.error}`, null, true);
+                } else {
+                    // If no text and no error, show what we got
+                    console.warn('Empty response:', data);
+                    addMessage('assistant', 'Received empty response. Please try again.', null, true);
                 }
             } catch (error) {
                 typingIndicator.classList.remove('active');

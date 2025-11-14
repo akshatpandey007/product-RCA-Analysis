@@ -102,6 +102,11 @@ async def send_message(request: ChatRequest):
             request.message, 
             timeout=request.timeout
         )
+        
+        # Ensure we never return empty text
+        if not response.get("text") or not response["text"].strip():
+            response["text"] = "I'm processing your request. Please wait a moment and try again, or rephrase your query."
+        
         return response
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

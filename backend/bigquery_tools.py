@@ -164,13 +164,25 @@ Corrected Query:"""
             Tuple of (success: bool, result: str)
         """
         try:
+            # Check if this is an aggregation query
+            query_upper = sql_query.upper()
+            is_aggregation_query = any(keyword in query_upper for keyword in [
+                'COUNT(', 'SUM(', 'AVG(', 'MAX(', 'MIN(', 'GROUP BY'
+            ])
+            
             # Add safety: limit results if LIMIT not specified
+            # For aggregation queries, LIMIT is less critical (they usually return few rows)
+            # But we still add it for safety
             query_to_execute = sql_query
-            if 'LIMIT' not in sql_query.upper():
-                query_to_execute = sql_query.rstrip(';') + ' LIMIT 100'
+            if 'LIMIT' not in query_upper:
+                # For aggregation queries, use higher limit since they typically return few rows
+                limit_value = 1000 if is_aggregation_query else 100
+                query_to_execute = sql_query.rstrip(';') + f' LIMIT {limit_value}'
             
             print(f"📊 Executing query (timeout: {timeout}s):")
             print(query_to_execute)
+            if is_aggregation_query:
+                print("📊 Detected aggregation query - will show all result rows")
             
             # Configure job with timeout (removed maximum_bytes_billed as it can cause access denied)
             from google.cloud.bigquery import QueryJobConfig
@@ -191,7 +203,12 @@ Corrected Query:"""
             # Convert results to string
             rows = list(results)
             if not rows:
+                print("⚠️ Query returned 0 rows")
                 return True, "Query executed successfully but returned no results."
+            
+            print(f"📊 Query returned {len(rows)} row(s)")
+            if len(rows) == 1:
+                print(f"📊 Single row result: {dict(rows[0])}")
             
             # Format results as table
             result_text = f"✅ Query returned {len(rows)} rows:\n\n"
@@ -202,13 +219,21 @@ Corrected Query:"""
                 result_text += " | ".join(columns) + "\n"
                 result_text += "-" * (len(" | ".join(columns))) + "\n"
                 
+                # For aggregation queries or small result sets, show all rows
+                # For large result sets, show first 50 rows (increased from 20)
+                max_display_rows = len(rows) if (is_aggregation_query or len(rows) <= 50) else 50
+                
                 # Add rows
-                for row in rows[:20]:  # Show first 20 rows
+                for row in rows[:max_display_rows]:
                     values = [str(row[col]) for col in columns]
                     result_text += " | ".join(values) + "\n"
                 
-                if len(rows) > 20:
-                    result_text += f"\n... and {len(rows) - 20} more rows"
+                if len(rows) > max_display_rows:
+                    result_text += f"\n... and {len(rows) - max_display_rows} more rows (total: {len(rows)} rows)"
+            
+            # Add summary for aggregation queries
+            if is_aggregation_query and len(rows) == 1:
+                result_text += f"\n📊 Aggregation result: {rows[0]}"
             
             return True, result_text
             
